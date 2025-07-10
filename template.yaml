@@ -1,0 +1,114 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Example SAM app demonstrating conditional globals environment variable merging issue
+
+Parameters:
+  UseOtelTracing:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Enable OpenTelemetry tracing
+  
+  IsProdStack:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Is this a production stack
+  
+  LogLevel:
+    Type: String
+    Default: 'INFO'
+    AllowedValues:
+      - 'DEBUG'
+      - 'INFO'
+      - 'WARN'
+      - 'ERROR'
+    Description: Log level for the application
+
+Conditions:
+  UseOtelTracing: !Equals [!Ref UseOtelTracing, 'true']
+  IsProdStack: !Equals [!Ref IsProdStack, 'true']
+
+Globals:
+  Function:
+    Runtime: nodejs18.x
+    Timeout: 30
+    MemorySize: 256
+    Environment:
+      Variables:
+        !If
+        - UseOtelTracing
+        - !If
+          - IsProdStack
+          - # Production environment with OpenTelemetry
+            LOG_LEVEL: !Ref LogLevel
+            log_level: !Ref LogLevel
+            OTEL_INSTRUMENTATION_COMMON_DEFAULT_ENABLED: 'true'
+            OTEL_SERVICE_NAME: 'sam-conditional-example'
+            OTEL_RESOURCE_ATTRIBUTES: 'service.name=sam-conditional-example,service.version=1.0.0'
+          - # Non-production environment with OpenTelemetry
+            LOG_LEVEL: !Ref LogLevel
+            log_level: !Ref LogLevel
+            OTEL_INSTRUMENTATION_COMMON_DEFAULT_ENABLED: 'false'
+            OTEL_SERVICE_NAME: 'sam-conditional-example-dev'
+        - # No OpenTelemetry
+          LOG_LEVEL: !Ref LogLevel
+          log_level: !Ref LogLevel
+
+Resources:
+  ApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      Cors:
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        AllowOrigin: "'*'"
+
+  Function1:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: function1/
+      Handler: index.handler
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /function1
+            Method: GET
+
+  Function2:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: function2/
+      Handler: index.handler
+      Environment:
+        Variables:
+          FUNCTION_SPECIFIC_VAR: 'function2-value'
+          CUSTOM_CONFIG: 'enabled'
+          LOG_LEVEL: 'DEBUG'  # This should override the global LOG_LEVEL
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /function2
+            Method: GET
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
+  
+  Function1Url:
+    Description: Function1 endpoint URL
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Prod/function1"
+  
+  Function2Url:
+    Description: Function2 endpoint URL  
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Prod/function2"
